@@ -8,6 +8,11 @@ Aplikacja na iPhone'a lub iPada z LiDAR-em, pisana bez Maca. Kod Swift leży tut
 |---|---|---|
 | Skan pomieszczenia | Apple RoomPlan: ściany, drzwi, okna, otwory, meble | `model.usdz`, `rzut.dxf`, `pomieszczenie.json` |
 | Pomiar odległości | Krzyżyk na środku ekranu, punkt → punkt | lista pomiarów w cm |
+| Skan 3D (etap 2) | Kolorowa chmura punktów z mapy głębi LiDAR (odszumianie wokselami 1 cm, tylko punkty o wysokiej pewności, 0,2–5 m) + siatka ARKit | `chmura.ply`, `siatka.obj` |
+
+**PLY/OBJ:** metry, oś Z w górę (zgodnie z rzutem DXF). Otwierają się w CloudCompare, MeshLab, Blenderze, a po konwersji (np. CloudCompare → LAS/E57) w Civil 3D/Recap.
+
+Najnowszy plik instalacyjny: https://github.com/allbury/lidar-skaner/releases/download/latest/LidarSkaner.ipa
 
 Pliki skanów są w **Pliki → Na moim iPhonie → LiDAR Skaner → Skan_RRRR-MM-DD_…**, a przycisk *Eksportuj* od razu otwiera udostępnianie (AirDrop, mail, Dysk Google).
 
@@ -47,5 +52,5 @@ LidarApp/
 
 ## Plan dalszych etapów
 
-- **Etap 2:** chmura punktów i siatka 3D (ARKit Scene Reconstruction + sceneDepth) z eksportem do PLY/OBJ/LAS.
+- ~~Etap 2: chmura punktów i siatka 3D~~ – zrobione (PLY/OBJ).
 - **Etap 3:** inwentaryzacja terenu i instalacji: znaczniki (studnia, rura, zasuwa), GPS / układ PL-2000, eksport do DXF/CSV.

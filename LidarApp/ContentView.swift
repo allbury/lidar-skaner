@@ -48,6 +48,23 @@ struct ContentView: View {
                     .disabled(!ARWorldTrackingConfiguration.isSupported)
                 }
 
+                Section("Etap 2") {
+                    NavigationLink {
+                        Scan3DView()
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading) {
+                                Text("Skan 3D")
+                                Text("Chmura punktów (PLY, kolor) + siatka (OBJ)")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "circle.dotted.and.circle")
+                        }
+                    }
+                    .disabled(!hasLidar)
+                }
+
                 Section("Pliki") {
                     Text("Zapisane skany znajdziesz w aplikacji Pliki → Na moim iPhonie → LiDAR Skaner.")
                         .font(.footnote)
