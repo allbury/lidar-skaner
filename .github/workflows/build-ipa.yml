@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: macos-15
@@ -45,3 +48,15 @@ jobs:
           name: LidarSkaner-ipa
           path: LidarSkaner.ipa
           retention-days: 30
+
+      # Stały, publiczny link: https://github.com/<user>/<repo>/releases/download/latest/LidarSkaner.ipa
+      - name: Publish release "latest"
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest LidarSkaner.ipa \
+            --title "LidarSkaner – najnowsza wersja" \
+            --notes "Zbudowano z commita ${{ github.sha }}" \
+            --target ${{ github.sha }}
