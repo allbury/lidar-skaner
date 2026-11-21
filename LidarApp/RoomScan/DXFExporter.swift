@@ -80,7 +80,11 @@ private struct DXFWriter {
         let c = position(transform)
         let ax = axis(transform.columns.0) * (dimensions.x / 2)
         let az = axis(transform.columns.2) * (dimensions.z / 2)
-        let corners = [c - ax - az, c + ax - az, c + ax + az, c - ax + az].map { plan($0) }
+        let p1: SIMD3<Float> = c - ax - az
+        let p2: SIMD3<Float> = c + ax - az
+        let p3: SIMD3<Float> = c + ax + az
+        let p4: SIMD3<Float> = c - ax + az
+        let corners: [SIMD2<Double>] = [plan(p1), plan(p2), plan(p3), plan(p4)]
         for i in 0..<4 {
             addLine(corners[i], corners[(i + 1) % 4], layer: layer, color: color)
         }
