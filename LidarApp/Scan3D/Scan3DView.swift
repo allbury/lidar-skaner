@@ -270,18 +270,29 @@ final class Scan3DModel: ObservableObject {
         let folder = sessionFolder
         let name = sessionName
 
+        let cloudFormat = settings.cloudFormat
+
         DispatchQueue.global(qos: .userInitiated).async {
             var urls: [URL] = []
+            var temporary: [URL] = []
             var failure: String?
             let mapping = Scan3DExporter.mapping(for: geo)
             let suffix = geo != nil ? "_PL2000" : ""
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 if !cloud.positions.isEmpty {
-                    let ply = folder.appendingPathComponent("chmura\(suffix).ply")
-                    try Scan3DExporter.writePLY(positions: cloud.positions, colors: cloud.colors,
-                                                mapping: mapping, useDouble: geo != nil, to: ply)
-                    urls.append(ply)
+                    if cloudFormat.includesLAS {
+                        let las = folder.appendingPathComponent("chmura\(suffix).las")
+                        try LASWriter.write(positions: cloud.positions, colors: cloud.colors,
+                                            mapping: mapping, epsg: geo?.epsg, to: las)
+                        urls.append(las)
+                    }
+                    if cloudFormat.includesPLY {
+                        let ply = folder.appendingPathComponent("chmura\(suffix).ply")
+                        try Scan3DExporter.writePLY(positions: cloud.positions, colors: cloud.colors,
+                                                    mapping: mapping, useDouble: geo != nil, to: ply)
+                        urls.append(ply)
+                    }
                 }
                 if !anchors.isEmpty {
                     let obj = folder.appendingPathComponent("siatka\(suffix).obj")
@@ -306,24 +317,28 @@ final class Scan3DModel: ObservableObject {
                     try geo.report.write(to: info, atomically: true, encoding: .utf8)
                     urls.append(info)
                 }
-                // Całość (ze zdjęciami) w jednym ZIP – najwygodniej do przeniesienia na komputer.
+                // Całość (ze zdjęciami) w jednym ZIP – tylko na czas udostępniania, w folderze tymczasowym,
+                // żeby nie zajmować drugi raz tyle miejsca. Folder skanu zostaje w Plikach.
                 if !photos.isEmpty {
-                    let zipURL = folder.deletingLastPathComponent().appendingPathComponent("\(name).zip")
+                    let zipURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).zip")
                     try PhotogrammetryExport.zip(folder: folder, to: zipURL)
                     urls.insert(zipURL, at: 0)
+                    temporary.append(zipURL)
                 }
             } catch {
                 failure = "Eksport nie powiódł się: \(error.localizedDescription)"
             }
             let result = urls
+            let cleanup = temporary
             let message = failure
             Task { @MainActor in
                 self.isExporting = false
                 if let message {
                     self.errorMessage = message
+                    cleanup.forEach { try? FileManager.default.removeItem(at: $0) }
                 } else {
                     self.savedFolderName = name
-                    self.shareItem = ShareItem(urls: result)
+                    self.shareItem = ShareItem(urls: result, cleanup: cleanup)
                 }
             }
         }
@@ -334,6 +349,7 @@ struct Scan3DView: View {
     @StateObject private var model = Scan3DModel()
     @State private var showSettings = false
     @State private var showControlPoints = false
+    @State private var lastShared: ShareItem?
 
     var body: some View {
         ZStack {
@@ -388,8 +404,14 @@ struct Scan3DView: View {
                                    onDelete: { model.deleteControlPoint($0) })
             }
         }
-        .sheet(item: $model.shareItem) { item in
-            ActivityView(items: item.urls)
+        .sheet(item: $model.shareItem, onDismiss: {
+            // Zabezpieczenie: ZIP znika także po zamknięciu okna gestem.
+            lastShared?.removeTemporaryFiles()
+        }) { item in
+            ActivityView(items: item.urls) {
+                item.removeTemporaryFiles()
+            }
+            .onAppear { lastShared = item }
         }
         .alert("Uwaga", isPresented: Binding(
             get: { model.errorMessage != nil },

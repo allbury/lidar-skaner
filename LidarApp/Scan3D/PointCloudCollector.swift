@@ -189,10 +189,15 @@ final class PointCloudCollector: NSObject, ARSessionDelegate {
 
         // Odległość do obiektu w środku kadru (LiDAR) → szerokość kadru na obiekcie.
         let distance = Self.centerDepth(frame)
+        // Krótszy bok kadru: przy telefonie trzymanym pionowo to on jest wzdłuż kierunku marszu,
+        // więc odstęp jest bezpieczny niezależnie od trzymania telefonu.
         let imageWidth = Float(frame.camera.imageResolution.width)
+        let imageHeight = Float(frame.camera.imageResolution.height)
         let fx = frame.camera.intrinsics[0][0]
+        let fy = frame.camera.intrinsics[1][1]
+        let fieldFactor = min(imageWidth / fx, imageHeight / fy)
         let effectiveDistance = min(distance ?? settings.maxDepth, 30)
-        let footprint = effectiveDistance * imageWidth / fx
+        let footprint = effectiveDistance * fieldFactor
         let maxBaseline = max(0.1, min(3, (1 - settings.targetOverlap) * footprint))
 
         var overlap: Float = 1
@@ -283,7 +288,7 @@ final class PointCloudCollector: NSObject, ARSessionDelegate {
         } else if let d = distance, d < 0.5 {
             g.warning = "Za blisko obiektu"
         } else if distance == nil {
-            g.warning = "Obiekt poza zasięgiem LiDAR – zdjęcia co \(String(format: "%.1f", Double((1 - settings.targetOverlap) * min(settings.maxDepth, 30))))+ m"
+            g.warning = "Obiekt poza zasięgiem LiDAR – odstęp zdjęć liczony dla \(Int(settings.maxDepth)) m"
         }
         onPhotoGuidance?(g)
     }

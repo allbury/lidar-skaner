@@ -37,6 +37,13 @@ Aplikacja na iPhone'a lub iPada z LiDAR-em, pisana bez Maca. Kod Swift leży tut
 - CSV: średnik i przecinek dziesiętny (Excel PL).
 - Głębokość: punkt 1 na krawędzi włazu, punkt 2 na dnie; wynik to różnica wysokości. LiDAR mierzy do ok. 5 m, a woda na dnie może przekłamać pomiar.
 
+**LAS (domyślny format chmury):** LAS 1.2, punkty z kolorem RGB, rozdzielczość 1 mm. Przy georeferencji plik zawiera kod EPSG PL-2000 (2176–2179), więc ReCap, CloudCompare, QGIS i Civil 3D (przez ReCap) od razu znają układ. Format można przełączyć w ⚙︎ na PLY albo LAS + PLY.
+
+**Przenoszenie na Windows:**
+- **Bez kabla:** w aplikacji Eksport → Zapisz w Plikach → Dysk Google; pliki pojawiają się w `G:\Mój dysk`.
+- **Kablem:** iTunes → telefon → Udostępnianie plików → LiDAR Skaner.
+- ZIP ze zdjęciami powstaje tylko na czas udostępniania i jest kasowany po zamknięciu okna, więc nie zajmuje drugi raz miejsca.
+
 **PLY/OBJ:** metry, oś Z w górę (zgodnie z rzutem DXF). Otwierają się w CloudCompare, MeshLab, Blenderze, a po konwersji (np. CloudCompare → LAS/E57) w Civil 3D/Recap.
 
 Najnowszy plik instalacyjny: https://github.com/allbury/lidar-skaner/releases/download/latest/LidarSkaner.ipa

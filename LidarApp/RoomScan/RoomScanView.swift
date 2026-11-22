@@ -60,6 +60,14 @@ final class RoomScanModel: ObservableObject {
 struct ShareItem: Identifiable {
     let id = UUID()
     let urls: [URL]
+    /// Pliki tymczasowe (np. ZIP) do skasowania po zamknięciu udostępniania.
+    var cleanup: [URL] = []
+
+    func removeTemporaryFiles() {
+        for url in cleanup {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
 }
 
 struct RoomScanView: View {
@@ -154,9 +162,14 @@ struct RoomCaptureRepresentable: UIViewControllerRepresentable {
 
 struct ActivityView: UIViewControllerRepresentable {
     let items: [Any]
+    var onComplete: (() -> Void)? = nil
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, _, _, _ in
+            onComplete?()
+        }
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}

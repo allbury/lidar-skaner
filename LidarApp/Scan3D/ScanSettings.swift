@@ -14,7 +14,23 @@ struct ScanSettings: Equatable {
         }
     }
 
+    enum CloudFormat: String, CaseIterable, Identifiable {
+        case las, ply, both
+        var id: String { rawValue }
+        var name: String {
+            switch self {
+            case .las: return "LAS"
+            case .ply: return "PLY"
+            case .both: return "LAS + PLY"
+            }
+        }
+        var includesLAS: Bool { self != .ply }
+        var includesPLY: Bool { self != .las }
+    }
+
     var preset: Preset = .interior
+    /// Format chmury punktów przy eksporcie (nie zależy od trybu).
+    var cloudFormat: CloudFormat = .las
     var maxDepth: Double = 5
     var voxelCentimeters: Double = 1
     var allowMediumConfidence = false
@@ -59,11 +75,13 @@ struct ScanSettingsView: View {
                     }
                     .pickerStyle(.segmented)
                     .onChange(of: settings.preset) { _, preset in
+                        let format = settings.cloudFormat
                         switch preset {
                         case .interior: settings = .interior
                         case .exterior: settings = .exterior
                         case .custom: break
                         }
+                        settings.cloudFormat = format
                     }
                 } footer: {
                     Text("„Budynek / most”: zasięg 8 m, siatka 2 cm, georeferencja i zdjęcia do fotogrametrii.")
@@ -81,10 +99,15 @@ struct ScanSettingsView: View {
                         Text("5 cm").tag(5.0)
                     }
                     Toggle("Punkty o średniej pewności", isOn: custom(\.allowMediumConfidence))
+                    Picker("Format eksportu", selection: $settings.cloudFormat) {
+                        ForEach(ScanSettings.CloudFormat.allCases) { f in
+                            Text(f.name).tag(f)
+                        }
+                    }
                 } header: {
                     Text("Chmura punktów")
                 } footer: {
-                    Text("LiDAR iPhone'a mierzy dokładnie do ok. 5 m. Powyżej punkty są coraz bardziej zaszumione – dlatego w trybie zewnętrznym warto robić też zdjęcia do fotogrametrii.")
+                    Text("LiDAR iPhone'a mierzy dokładnie do ok. 5 m. Powyżej punkty są coraz bardziej zaszumione – dlatego w trybie zewnętrznym warto robić też zdjęcia do fotogrametrii. LAS (z kodem EPSG układu PL-2000) otwiera się w ReCap, CloudCompare, QGIS; PLY w MeshLab/Blender.")
                 }
 
                 Section {
