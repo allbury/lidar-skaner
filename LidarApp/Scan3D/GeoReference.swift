@@ -25,8 +25,14 @@ struct GeoReference {
     let north0: Double
     let height0: Double?
     let sampleCount: Int
-    /// Średni kwadratowy rozrzut próbek GPS względem rozwiązania [m].
+    /// Średni kwadratowy rozrzut próbek GPS / odchyłek fotopunktów względem rozwiązania [m].
     let rmsHorizontal: Double
+    var method: String = "GPS + kompas"
+
+    var isFromControlPoints: Bool { method.hasPrefix("fotopunkt") || method.hasPrefix("1 fotopunkt") }
+
+    /// Kod EPSG układu PL-2000 dla strefy (5 → 2176 … 8 → 2179).
+    var epsg: Int { 2171 + zone }
 
     static let minSamples = 5
 
@@ -108,8 +114,9 @@ struct GeoReference {
 
     var report: String {
         var lines: [String] = []
-        lines.append("Georeferencja skanu (GPS + kompas) – LiDAR Skaner")
-        lines.append("Układ: PL-2000, strefa \(zone) (południk osiowy \(zone * 3)°)")
+        lines.append("Georeferencja skanu – LiDAR Skaner")
+        lines.append("Metoda: \(method)")
+        lines.append("Układ: PL-2000, strefa \(zone) (południk osiowy \(zone * 3)°), EPSG:\(epsg)")
         lines.append("Osie plików: X = wschód (Y 2000), Y = północ (X 2000), Z = wysokość")
         lines.append(String(format: "Początek układu lokalnego: Y2000 = %.3f, X2000 = %.3f", east0, north0))
         if let height0 {
@@ -119,11 +126,18 @@ struct GeoReference {
         }
         lines.append(String(format: "Zbieżność południków: %.4f°", gamma * 180 / .pi))
         lines.append(String(format: "Skala odwzorowania: %.6f", scale))
-        lines.append("Próbek GPS: \(sampleCount)")
-        lines.append(String(format: "Rozrzut próbek GPS (RMS): %.2f m", rmsHorizontal))
-        lines.append("")
-        lines.append("UWAGA: obrót wynika z kompasu telefonu (błąd zwykle kilka stopni – na 50 m to kilka metrów).")
-        lines.append("Do zastosowań geodezyjnych dopasuj chmurę do punktów osnowy/GNSS RTK (np. CloudCompare: Align / Point pair picking).")
+        if isFromControlPoints {
+            lines.append("Fotopunktów: \(sampleCount)")
+            lines.append(String(format: "Odchyłki na fotopunktach (RMS): %.3f m", rmsHorizontal))
+            lines.append("")
+            lines.append("Dokładność zależy od rozmieszczenia fotopunktów (najlepiej ≥ 3, na krańcach obiektu) i dryfu ARKit.")
+        } else {
+            lines.append("Próbek GPS: \(sampleCount)")
+            lines.append(String(format: "Rozrzut próbek GPS (RMS): %.2f m", rmsHorizontal))
+            lines.append("")
+            lines.append("UWAGA: obrót wynika z kompasu telefonu (błąd zwykle kilka stopni – na 50 m to kilka metrów).")
+            lines.append("Do zastosowań geodezyjnych użyj fotopunktów z RTK lub dopasuj chmurę w CloudCompare.")
+        }
         return lines.joined(separator: "\n") + "\n"
     }
 }

@@ -22,6 +22,9 @@ final class Scan3DModel: ObservableObject {
     @Published var savedFolderName: String?
     @Published var geoSampleCount = 0
     @Published var gpsAccuracy: Double?
+    @Published var guidance = PhotoGuidance()
+    @Published var controlPoints: [ControlPoint] = []
+    @Published var editingControlPointID: UUID?
 
     private var sessionFolder: URL
     private var sessionName: String
@@ -29,6 +32,7 @@ final class Scan3DModel: ObservableObject {
     private var lastCameraPosition: SIMD3<Float>?
     private var cancellables = Set<AnyCancellable>()
     private var isRunning = false
+    private var controlAnchors: [UUID: AnchorEntity] = [:]
 
     /// Próbki GPS przyjmowane do georeferencji.
     private let maxGeoAccuracy: Double = 15
@@ -52,6 +56,9 @@ final class Scan3DModel: ObservableObject {
         }
         collector.onCameraPosition = { [weak self] position in
             self?.lastCameraPosition = position
+        }
+        collector.onPhotoGuidance = { [weak self] g in
+            self?.guidance = g
         }
 
         location.$current
@@ -85,6 +92,11 @@ final class Scan3DModel: ObservableObject {
         config.planeDetection = [.horizontal, .vertical]
         // Georeferencja: osie zgodne z kierunkami świata (X = wschód, −Z = północ wg kompasu).
         config.worldAlignment = settings.georeference ? .gravityAndHeading : .gravity
+        // Format wideo pozwalający robić zdjęcia w pełnej rozdzielczości aparatu.
+        if settings.capturePhotos && settings.highResPhotos,
+           let format = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
+            config.videoFormat = format
+        }
         return config
     }
 
@@ -121,6 +133,8 @@ final class Scan3DModel: ObservableObject {
         pointCount = 0
         photoCount = 0
         meshCount = 0
+        guidance = PhotoGuidance()
+        removeAllControlPoints()
         isCollecting = true
         collector.isCollecting = true
         collector.configure(settings.collector,
@@ -150,6 +164,48 @@ final class Scan3DModel: ObservableObject {
         }
     }
 
+    // MARK: Fotopunkty
+
+    /// Wskazuje fotopunkt krzyżykiem w środku ekranu.
+    func addControlPoint() {
+        let center = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+        guard let hit = arView.raycast(from: center, allowing: .estimatedPlane, alignment: .any).first else {
+            errorMessage = "Nie wykryto powierzchni pod krzyżykiem – podejdź bliżej znacznika (do ok. 5 m)."
+            return
+        }
+        let t = hit.worldTransform.columns.3
+        let p = SIMD3<Float>(t.x, t.y, t.z)
+        let point = ControlPoint(name: "FP\(controlPoints.count + 1)", local: p)
+        controlPoints.append(point)
+
+        let sphere = ModelEntity(mesh: .generateSphere(radius: 0.025),
+                                 materials: [SimpleMaterial(color: .systemRed, isMetallic: false)])
+        let anchor = AnchorEntity(world: p)
+        anchor.addChild(sphere)
+        arView.scene.addAnchor(anchor)
+        controlAnchors[point.id] = anchor
+        editingControlPointID = point.id
+    }
+
+    func updateControlPoint(_ point: ControlPoint) {
+        if let i = controlPoints.firstIndex(where: { $0.id == point.id }) {
+            controlPoints[i] = point
+        }
+    }
+
+    func deleteControlPoint(_ id: UUID) {
+        controlPoints.removeAll { $0.id == id }
+        if let anchor = controlAnchors.removeValue(forKey: id) {
+            arView.scene.removeAnchor(anchor)
+        }
+    }
+
+    private func removeAllControlPoints() {
+        for anchor in controlAnchors.values { arView.scene.removeAnchor(anchor) }
+        controlAnchors.removeAll()
+        controlPoints.removeAll()
+    }
+
     // MARK: GPS
 
     private func handleLocation(_ loc: CLLocation) {
@@ -169,11 +225,20 @@ final class Scan3DModel: ObservableObject {
     }
 
     var geoStatus: String? {
+        let surveyed = controlPoints.filter(\.isSurveyed).count
+        if surveyed >= 2 || (surveyed == 1 && settings.georeference) {
+            return "Georeferencja: fotopunkty RTK (\(surveyed))"
+        }
         guard settings.georeference else { return nil }
         if geoSampleCount < GeoReference.minSamples {
             return "Georeferencja: \(geoSampleCount)/\(GeoReference.minSamples) próbek GPS"
         }
         return "Georeferencja: \(geoSampleCount) próbek GPS"
+    }
+
+    var isGeoReady: Bool {
+        let surveyed = controlPoints.filter(\.isSurveyed).count
+        return surveyed >= 2 || (surveyed == 1 && settings.georeference) || geoSampleCount >= GeoReference.minSamples
     }
 
     // MARK: Eksport
@@ -187,16 +252,18 @@ final class Scan3DModel: ObservableObject {
         let anchors = currentMeshAnchors()
         let cloud = collector.snapshot()
         let photos = collector.photoRecords()
+        let gcps = controlPoints
         guard !anchors.isEmpty || !cloud.positions.isEmpty || !photos.isEmpty else {
             errorMessage = "Brak danych – najpierw zeskanuj otoczenie."
             return
         }
 
-        let geo: GeoReference? = settings.georeference ? GeoReference.solve(geoSamples) : nil
-        if settings.georeference {
-            if geo == nil {
-                errorMessage = "Za mało próbek GPS do georeferencji (\(geoSamples.count)/\(GeoReference.minSamples)). Eksportuję w układzie lokalnym – skanuj dłużej na otwartym terenie."
-            }
+        // Priorytet: fotopunkty RTK, potem GPS + kompas.
+        let gcpGeo = GeoReference.fromControlPoints(gcps, headingAligned: settings.georeference)
+        let gpsGeo: GeoReference? = settings.georeference ? GeoReference.solve(geoSamples) : nil
+        let geo = gcpGeo ?? gpsGeo
+        if settings.georeference && geo == nil {
+            errorMessage = "Za mało próbek GPS do georeferencji (\(geoSamples.count)/\(GeoReference.minSamples)) i brak fotopunktów RTK. Eksportuję w układzie lokalnym."
         }
 
         isExporting = true
@@ -226,11 +293,24 @@ final class Scan3DModel: ObservableObject {
                     try Scan3DExporter.writePhotoPoses(photos, mapping: mapping,
                                                        georeferenced: geo != nil, to: csv)
                     urls.append(csv)
+                    urls += try PhotogrammetryExport.write(photos: photos, controlPoints: gcps,
+                                                           geo: geo, to: folder)
+                } else if !gcps.isEmpty {
+                    let gcpURL = folder.appendingPathComponent("fotopunkty.csv")
+                    try PhotogrammetryExport.controlPointsCSV(gcps, geo: geo)
+                        .write(to: gcpURL, atomically: true, encoding: .utf8)
+                    urls.append(gcpURL)
                 }
                 if let geo {
                     let info = folder.appendingPathComponent("georeferencja.txt")
                     try geo.report.write(to: info, atomically: true, encoding: .utf8)
                     urls.append(info)
+                }
+                // Całość (ze zdjęciami) w jednym ZIP – najwygodniej do przeniesienia na komputer.
+                if !photos.isEmpty {
+                    let zipURL = folder.deletingLastPathComponent().appendingPathComponent("\(name).zip")
+                    try PhotogrammetryExport.zip(folder: folder, to: zipURL)
+                    urls.insert(zipURL, at: 0)
                 }
             } catch {
                 failure = "Eksport nie powiódł się: \(error.localizedDescription)"
@@ -253,11 +333,17 @@ final class Scan3DModel: ObservableObject {
 struct Scan3DView: View {
     @StateObject private var model = Scan3DModel()
     @State private var showSettings = false
+    @State private var showControlPoints = false
 
     var body: some View {
         ZStack {
             ARViewContainer(arView: model.arView)
                 .ignoresSafeArea()
+
+            Image(systemName: "plus")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(.white)
+                .shadow(radius: 2)
 
             VStack {
                 stats
@@ -269,7 +355,12 @@ struct Scan3DView: View {
         .navigationTitle("Skan 3D")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showControlPoints = true
+                } label: {
+                    Label("Fotopunkty", systemImage: "scope")
+                }
                 Button {
                     showSettings = true
                 } label: {
@@ -282,6 +373,19 @@ struct Scan3DView: View {
         .sheet(isPresented: $showSettings) {
             ScanSettingsView(settings: model.settings) { newSettings in
                 model.apply(newSettings)
+            }
+        }
+        .sheet(isPresented: $showControlPoints) {
+            ControlPointListView(model: model)
+        }
+        .sheet(item: Binding(
+            get: { model.editingControlPointID.map { IdentifiedID(id: $0) } },
+            set: { model.editingControlPointID = $0?.id }
+        )) { item in
+            if let point = model.controlPoints.first(where: { $0.id == item.id }) {
+                ControlPointEditor(point: point,
+                                   onSave: { model.updateControlPoint($0) },
+                                   onDelete: { model.deleteControlPoint($0) })
             }
         }
         .sheet(item: $model.shareItem) { item in
@@ -306,9 +410,15 @@ struct Scan3DView: View {
                 if model.settings.capturePhotos {
                     Label("\(model.photoCount)", systemImage: "camera")
                 }
+                if !model.controlPoints.isEmpty {
+                    Label("\(model.controlPoints.count)", systemImage: "scope")
+                }
                 if !model.isCollecting {
                     Text("PAUZA").bold().foregroundStyle(.orange)
                 }
+            }
+            if model.settings.capturePhotos {
+                photoGuidance
             }
             if let geo = model.geoStatus {
                 HStack(spacing: 6) {
@@ -318,7 +428,7 @@ struct Scan3DView: View {
                         Text(String(format: "(±%.0f m)", acc))
                     }
                 }
-                .foregroundStyle(model.geoSampleCount >= GeoReference.minSamples ? Color.green : Color.orange)
+                .foregroundStyle(model.isGeoReady ? Color.green : Color.orange)
             }
         }
         .font(.footnote.monospacedDigit())
@@ -327,9 +437,35 @@ struct Scan3DView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
     }
 
+    private var photoGuidance: some View {
+        let g = model.guidance
+        let target = Int(model.settings.targetOverlap * 100)
+        return VStack(spacing: 2) {
+            HStack(spacing: 10) {
+                Text("Nakładanie \(g.overlap)% (cel \(target)%)")
+                    .foregroundStyle(g.overlap >= target - 5 ? Color.primary : Color.orange)
+                if let d = g.distance {
+                    Text(String(format: "obiekt %.1f m", d))
+                }
+                Text(String(format: "%.1f m/s", g.speed))
+                    .foregroundStyle(g.speed > 1.0 ? Color.red : Color.primary)
+                if g.rejectedBlurry > 0 {
+                    Label("\(g.rejectedBlurry)", systemImage: "camera.metering.unknown")
+                        .foregroundStyle(.orange)
+                }
+            }
+            if let warning = g.warning {
+                Text(warning).bold().foregroundStyle(.orange)
+            }
+        }
+    }
+
     private var hint: String {
+        if model.settings.capturePhotos {
+            return "Idź wolno wzdłuż obiektu (do ~0,7 m/s), obejmij go z kilku wysokości. Fotopunkt: celuj krzyżykiem w znacznik i dotknij ◎."
+        }
         if model.settings.preset == .exterior || model.settings.maxDepth > 5 {
-            return "Idź wolno wzdłuż obiektu w odległości 2–5 m, telefon trzymaj stabilnie. Dłuższe obiekty skanuj odcinkami (eksport → kosz → dalej)."
+            return "Idź wolno wzdłuż obiektu w odległości 2–5 m, telefon trzymaj stabilnie. Dłuższe obiekty skanuj odcinkami."
         }
         return "Poruszaj się powoli, 0,5–4 m od powierzchni. Punkty o niskiej pewności są pomijane."
     }
@@ -358,6 +494,13 @@ struct Scan3DView: View {
                     model.toggleMesh()
                 } label: {
                     Image(systemName: model.showMesh ? "eye" : "eye.slash")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    model.addControlPoint()
+                } label: {
+                    Image(systemName: "scope")
                 }
                 .buttonStyle(.bordered)
 
@@ -391,5 +534,134 @@ struct Scan3DView: View {
         if n >= 1_000_000 { return String(format: "%.2f mln", Double(n) / 1_000_000) }
         if n >= 1_000 { return String(format: "%.0f tys.", Double(n) / 1_000) }
         return "\(n)"
+    }
+}
+
+// MARK: - Fotopunkty: lista i edycja
+
+struct ControlPointListView: View {
+    @ObservedObject var model: Scan3DModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    if model.controlPoints.isEmpty {
+                        Text("Brak fotopunktów. Wyceluj krzyżykiem w środek znacznika w terenie i dotknij ◎ na dole ekranu.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(model.controlPoints) { p in
+                        Button {
+                            dismiss()
+                            model.editingControlPointID = p.id
+                        } label: {
+                            HStack {
+                                Text(p.name).bold()
+                                Spacer()
+                                if let x = p.x2000, let y = p.y2000 {
+                                    Text(String(format: "X %.2f Y %.2f", x, y))
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("bez RTK").font(.caption).foregroundStyle(.orange)
+                                }
+                            }
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                    .onDelete { offsets in
+                        for id in offsets.map({ model.controlPoints[$0].id }) {
+                            model.deleteControlPoint(id)
+                        }
+                    }
+                } footer: {
+                    Text("Fotopunkty z współrzędnymi RTK (PL-2000) zastępują georeferencję z GPS i kompasu: 2+ fotopunkty dają obrót i położenie z dokładnością ~cm (plus dryf ARKit). Rozmieść je na krańcach obiektu. Trafiają też do paczki fotogrametrycznej.")
+                }
+            }
+            .navigationTitle("Fotopunkty")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Gotowe") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct ControlPointEditor: View {
+    @State var point: ControlPoint
+    let onSave: (ControlPoint) -> Void
+    let onDelete: (UUID) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var xText = ""
+    @State private var yText = ""
+    @State private var hText = ""
+
+    init(point: ControlPoint, onSave: @escaping (ControlPoint) -> Void, onDelete: @escaping (UUID) -> Void) {
+        _point = State(initialValue: point)
+        self.onSave = onSave
+        self.onDelete = onDelete
+        _xText = State(initialValue: PointDraft.text(point.x2000, 3))
+        _yText = State(initialValue: PointDraft.text(point.y2000, 3))
+        _hText = State(initialValue: PointDraft.text(point.height, 3))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Fotopunkt") {
+                    LabeledContent("Nazwa") {
+                        TextField("FP1", text: $point.name)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+                Section {
+                    coordinateRow("X (północ)", text: $xText)
+                    coordinateRow("Y (wschód)", text: $yText)
+                    coordinateRow("H [m]", text: $hText)
+                } header: {
+                    Text("Współrzędne z RTK (PL-2000) – opcjonalnie")
+                } footer: {
+                    Text("Możesz je wpisać teraz albo później w Metashape/RealityCapture. Bez nich fotopunkt służy tylko do oznaczenia na zdjęciach.")
+                }
+                Section {
+                    Button(role: .destructive) {
+                        onDelete(point.id)
+                        dismiss()
+                    } label: {
+                        Label("Usuń fotopunkt", systemImage: "trash")
+                    }
+                }
+            }
+            .navigationTitle(point.name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Anuluj") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Zapisz") {
+                        var p = point
+                        p.x2000 = PointDraft.parse(xText)
+                        p.y2000 = PointDraft.parse(yText)
+                        p.height = PointDraft.parse(hText)
+                        onSave(p)
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    private func coordinateRow(_ title: String, text: Binding<String>) -> some View {
+        LabeledContent(title) {
+            TextField("—", text: text)
+                .keyboardType(.numbersAndPunctuation)
+                .multilineTextAlignment(.trailing)
+                .monospacedDigit()
+        }
     }
 }

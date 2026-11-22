@@ -21,6 +21,13 @@ Aplikacja na iPhone'a lub iPada z LiDAR-em, pisana bez Maca. Kod Swift leży tut
 - zasięg LiDAR do 8 m (powyżej ~5 m szum rośnie), siatka 2 cm, punkty średniej pewności, do 4 mln punktów;
 - **georeferencja PL-2000**: ARKit w orientacji wg kompasu + przesunięcie z GPS uśrednione z całego obchodu (próbki ≤ 15 m), z uwzględnieniem zbieżności południków (zweryfikowane z odwzorowaniem) → `chmura_PL2000.ply` (double), `siatka_PL2000.obj`, `georeferencja.txt`. Dokładność to ok. 1–3 m dla położenia i kilka stopni dla obrotu. Do celów geodezyjnych dopasuj chmurę do punktów RTK, np. w CloudCompare;
 - **zdjęcia do fotogrametrii**: automatycznie co 0,5 m lub 15°, z GPS w EXIF, oraz `zdjecia_pozycje.csv` (pozycje kamer i kalibracja). Służą do partii poza zasięgiem LiDAR-u (wysokie elewacje, spód i ustroje mostów), do obróbki w Agisoft Metashape, RealityCapture lub Meshroom;
+- **fotogrametria (rozszerzona):**
+  - zdjęcia w pełnej rozdzielczości aparatu (ARKit `captureHighResolutionFrame`);
+  - odstęp między zdjęciami liczony z odległości do obiektu (LiDAR) dla zadanego nakładania (60–85%);
+  - odrzucanie poruszonych klatek (ostrość < 50% mediany) i ostrzeżenie przy ruchu > 1 m/s;
+  - w EXIF: GPS i ogniskowa 35 mm;
+  - eksport: `metashape_referencje.csv` (pozycje kamer w PL-2000 z ARKit), `realitycapture_flightlog.csv`, `INSTRUKCJA_fotogrametria.txt` i ZIP całego skanu;
+- **fotopunkty** (◎): znacznik wskazany krzyżykiem i opcjonalnie współrzędne RTK. Z 2 lub więcej fotopunktami z RTK georeferencja przestaje zależeć od kompasu i GPS (obrót i przesunięcie dopasowane metodą najmniejszych kwadratów). Eksport: `fotopunkty.csv` z odchyłkami i `fotopunkty_na_zdjeciach.csv`, czyli gdzie szukać znacznika na każdym zdjęciu;
 - długie obiekty skanuj odcinkami (eksport → kosz → kolejny odcinek), bo śledzenie ARKit dryfuje na dużych odległościach.
 
 **Inwentaryzacja – ważne:**

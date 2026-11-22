@@ -15,8 +15,24 @@ struct CollectorSettings: Equatable {
     var minConfidence: UInt8 = 2
     var maxPoints = 3_000_000
     var capturePhotos = false
-    var photoMinDistance: Float = 0.5
+    /// Zdjęcia w pełnej rozdzielczości aparatu (ARKit captureHighResolutionFrame), zamiast klatek wideo.
+    var highResPhotos = true
+    /// Docelowe nakładanie sąsiednich zdjęć (0,6–0,85). Odstęp między zdjęciami liczony z odległości od obiektu.
+    var targetOverlap: Float = 0.75
     var photoMinAngleDegrees: Float = 15
+    var photoMinInterval: TimeInterval = 0.5
+}
+
+/// Podpowiedzi dla operatora przy zdjęciach do fotogrametrii (wątek główny).
+struct PhotoGuidance: Equatable {
+    /// Szacowane nakładanie względem ostatniego zdjęcia [%].
+    var overlap: Int = 100
+    /// Odległość do obiektu w środku kadru [m].
+    var distance: Float?
+    /// Prędkość ruchu telefonu [m/s].
+    var speed: Float = 0
+    var rejectedBlurry = 0
+    var warning: String?
 }
 
 /// Pozycja i kalibracja kamery dla jednego zdjęcia (do fotogrametrii).
@@ -44,7 +60,14 @@ final class PointCloudCollector: NSObject, ARSessionDelegate {
     private var busy = false
     private var photoBusy = false
     private var lastPhotoTransform: simd_float4x4?
+    private var lastPhotoTime: TimeInterval = 0
     private var photoIndex = 0
+    private var sharpnessHistory: [Float] = []
+    private var rejectedBlurry = 0
+    private var lastMotionTransform: simd_float4x4?
+    private var lastMotionTime: TimeInterval = 0
+    private var smoothedSpeed: Float = 0
+    private var lastGuidanceTime: TimeInterval = 0
 
     /// Wołane z kolejki roboczej (liczba punktów łącznie).
     var onCountChanged: ((Int) -> Void)?
@@ -52,6 +75,8 @@ final class PointCloudCollector: NSObject, ARSessionDelegate {
     var onPhotoCountChanged: ((Int) -> Void)?
     /// Wołane na wątku głównym przy każdej klatce z pozycją kamery (do georeferencji).
     var onCameraPosition: ((SIMD3<Float>) -> Void)?
+    /// Wołane na wątku głównym ok. 4×/s, gdy zdjęcia są włączone.
+    var onPhotoGuidance: ((PhotoGuidance) -> Void)?
 
     let interval: TimeInterval = 0.33
     let sampleStep = 2
@@ -74,7 +99,12 @@ final class PointCloudCollector: NSObject, ARSessionDelegate {
         self.photoFolder = photoFolder
         lastTimestamp = 0
         lastPhotoTransform = nil
+        lastPhotoTime = 0
         photoIndex = 0
+        sharpnessHistory.removeAll()
+        rejectedBlurry = 0
+        lastMotionTransform = nil
+        smoothedSpeed = 0
         lock.lock()
         positions.removeAll(keepingCapacity: false)
         colors.removeAll(keepingCapacity: false)
@@ -107,7 +137,7 @@ final class PointCloudCollector: NSObject, ARSessionDelegate {
         onCameraPosition?(SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z))
 
         guard isCollecting else { return }
-        maybeCapturePhoto(frame)
+        maybeCapturePhoto(frame, session: session)
 
         guard !busy, frame.timestamp - lastTimestamp >= interval else { return }
         guard let depth = frame.sceneDepth else { return }
@@ -136,49 +166,186 @@ final class PointCloudCollector: NSObject, ARSessionDelegate {
 
     // MARK: Zdjęcia do fotogrametrii
 
-    private func maybeCapturePhoto(_ frame: ARFrame) {
-        guard settings.capturePhotos, !photoBusy, let folder = photoFolder else { return }
+    private static func position(_ t: simd_float4x4) -> SIMD3<Float> {
+        SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+    }
+
+    private static func forward(_ t: simd_float4x4) -> SIMD3<Float> {
+        simd_normalize(-SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z))
+    }
+
+    private func maybeCapturePhoto(_ frame: ARFrame, session: ARSession) {
+        guard settings.capturePhotos, let folder = photoFolder else { return }
         let t = frame.camera.transform
+        let now = frame.timestamp
+
+        // Prędkość ruchu (wygładzona) – za szybki ruch = rozmyte zdjęcia i słabe dopasowanie.
+        if let last = lastMotionTransform, now > lastMotionTime {
+            let v = simd_distance(Self.position(last), Self.position(t)) / Float(now - lastMotionTime)
+            smoothedSpeed = smoothedSpeed * 0.85 + v * 0.15
+        }
+        lastMotionTransform = t
+        lastMotionTime = now
+
+        // Odległość do obiektu w środku kadru (LiDAR) → szerokość kadru na obiekcie.
+        let distance = Self.centerDepth(frame)
+        let imageWidth = Float(frame.camera.imageResolution.width)
+        let fx = frame.camera.intrinsics[0][0]
+        let effectiveDistance = min(distance ?? settings.maxDepth, 30)
+        let footprint = effectiveDistance * imageWidth / fx
+        let maxBaseline = max(0.1, min(3, (1 - settings.targetOverlap) * footprint))
+
+        var overlap: Float = 1
+        var angle: Float = 0
+        var moved: Float = 0
         if let last = lastPhotoTransform {
-            let p0 = SIMD3<Float>(last.columns.3.x, last.columns.3.y, last.columns.3.z)
-            let p1 = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
-            let moved = simd_distance(p0, p1)
-            let f0 = -SIMD3<Float>(last.columns.2.x, last.columns.2.y, last.columns.2.z)
-            let f1 = -SIMD3<Float>(t.columns.2.x, t.columns.2.y, t.columns.2.z)
-            let cosAngle = max(-1, min(1, simd_dot(simd_normalize(f0), simd_normalize(f1))))
-            let angle = acos(cosAngle) * 180 / .pi
-            if moved < settings.photoMinDistance && angle < settings.photoMinAngleDegrees { return }
+            moved = simd_distance(Self.position(last), Self.position(t))
+            overlap = max(0, 1 - moved / max(footprint, 0.01))
+            let cosAngle = max(-1, min(1, simd_dot(Self.forward(last), Self.forward(t))))
+            angle = acos(cosAngle) * 180 / .pi
+        }
+
+        publishGuidance(now: now, overlap: overlap, distance: distance)
+
+        guard !photoBusy, now - lastPhotoTime >= settings.photoMinInterval else { return }
+        if lastPhotoTransform != nil && moved < maxBaseline && angle < settings.photoMinAngleDegrees {
+            return
+        }
+
+        // Odrzucanie poruszonych klatek: ostrość < 50% mediany ostatnich klatek.
+        let sharpness = Self.sharpness(frame.capturedImage)
+        sharpnessHistory.append(sharpness)
+        if sharpnessHistory.count > 20 { sharpnessHistory.removeFirst() }
+        if sharpnessHistory.count >= 5 {
+            let median = sharpnessHistory.sorted()[sharpnessHistory.count / 2]
+            if sharpness < median * 0.5 || smoothedSpeed > 1.2 {
+                rejectedBlurry += 1
+                return
+            }
         }
 
         lastPhotoTransform = t
+        lastPhotoTime = now
         photoIndex += 1
         photoBusy = true
-
         let fileName = String(format: "IMG_%04d.jpg", photoIndex)
+        let location = latestLocation
+
+        if settings.highResPhotos {
+            session.captureHighResolutionFrame { [weak self] hiFrame, _ in
+                guard let self else { return }
+                let source = hiFrame ?? frame
+                self.savePhoto(source, fileName: fileName, location: location, folder: folder)
+            }
+        } else {
+            savePhoto(frame, fileName: fileName, location: location, folder: folder)
+        }
+    }
+
+    private func savePhoto(_ frame: ARFrame, fileName: String, location: CLLocation?, folder: URL) {
         let buffer = frame.capturedImage
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let intrinsics = frame.camera.intrinsics
         let record = PhotoRecord(fileName: fileName,
                                  timestamp: frame.timestamp,
-                                 transform: t,
-                                 intrinsics: frame.camera.intrinsics,
-                                 width: CVPixelBufferGetWidth(buffer),
-                                 height: CVPixelBufferGetHeight(buffer),
-                                 location: latestLocation)
+                                 transform: frame.camera.transform,
+                                 intrinsics: intrinsics,
+                                 width: width,
+                                 height: height,
+                                 location: location)
+        // Ogniskowa ekwiwalentna 35 mm (szerokość kadru 36 mm) – programy fotogrametryczne startują od niej kalibrację.
+        let focal35 = Double(intrinsics[0][0]) * 36 / Double(max(width, 1))
 
         photoQueue.async { [weak self] in
             guard let self else { return }
-            let saved = Self.writeJPEG(buffer, location: record.location,
+            let saved = Self.writeJPEG(buffer, location: location, focal35mm: focal35,
                                        to: folder.appendingPathComponent(fileName))
-            var count = 0
             self.lock.lock()
             if saved { self.photos.append(record) }
-            count = self.photos.count
+            let count = self.photos.count
             self.lock.unlock()
             self.onPhotoCountChanged?(count)
             DispatchQueue.main.async { self.photoBusy = false }
         }
     }
 
-    private static func writeJPEG(_ buffer: CVPixelBuffer, location: CLLocation?, to url: URL) -> Bool {
+    private func publishGuidance(now: TimeInterval, overlap: Float, distance: Float?) {
+        guard now - lastGuidanceTime >= 0.25 else { return }
+        lastGuidanceTime = now
+        var g = PhotoGuidance()
+        g.overlap = Int((overlap * 100).rounded())
+        g.distance = distance
+        g.speed = smoothedSpeed
+        g.rejectedBlurry = rejectedBlurry
+        if smoothedSpeed > 1.0 {
+            g.warning = "Za szybko – zwolnij (max ok. 0,7 m/s)"
+        } else if let d = distance, d < 0.5 {
+            g.warning = "Za blisko obiektu"
+        } else if distance == nil {
+            g.warning = "Obiekt poza zasięgiem LiDAR – zdjęcia co \(String(format: "%.1f", Double((1 - settings.targetOverlap) * min(settings.maxDepth, 30))))+ m"
+        }
+        onPhotoGuidance?(g)
+    }
+
+    /// Mediana głębokości z małego obszaru w środku mapy głębi (nil, gdy brak pomiaru).
+    private static func centerDepth(_ frame: ARFrame) -> Float? {
+        guard let depthMap = frame.sceneDepth?.depthMap else { return nil }
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
+        let w = CVPixelBufferGetWidth(depthMap)
+        let h = CVPixelBufferGetHeight(depthMap)
+        let row = CVPixelBufferGetBytesPerRow(depthMap)
+        var values: [Float] = []
+        for dy in stride(from: -12, through: 12, by: 4) {
+            for dx in stride(from: -16, through: 16, by: 4) {
+                let x = w / 2 + dx
+                let y = h / 2 + dy
+                let d = base.load(fromByteOffset: y * row + x * 4, as: Float32.self)
+                if d.isFinite && d > 0.1 { values.append(d) }
+            }
+        }
+        guard values.count >= 5 else { return nil }
+        return values.sorted()[values.count / 2]
+    }
+
+    /// Ostrość: wariancja laplasjanu luminancji w środkowym fragmencie klatki.
+    private static func sharpness(_ image: CVPixelBuffer) -> Float {
+        CVPixelBufferLockBaseAddress(image, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(image, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(image, 0) else { return 0 }
+        let w = CVPixelBufferGetWidthOfPlane(image, 0)
+        let h = CVPixelBufferGetHeightOfPlane(image, 0)
+        let row = CVPixelBufferGetBytesPerRowOfPlane(image, 0)
+        let half = 160
+        let x0 = max(2, w / 2 - half)
+        let x1 = min(w - 2, w / 2 + half)
+        let y0 = max(2, h / 2 - half)
+        let y1 = min(h - 2, h / 2 + half)
+        var sum: Float = 0
+        var sumSq: Float = 0
+        var n: Float = 0
+        for y in stride(from: y0, to: y1, by: 2) {
+            for x in stride(from: x0, to: x1, by: 2) {
+                let c = Float(base.load(fromByteOffset: y * row + x, as: UInt8.self))
+                let l = Float(base.load(fromByteOffset: y * row + x - 1, as: UInt8.self))
+                let r = Float(base.load(fromByteOffset: y * row + x + 1, as: UInt8.self))
+                let u = Float(base.load(fromByteOffset: (y - 1) * row + x, as: UInt8.self))
+                let d = Float(base.load(fromByteOffset: (y + 1) * row + x, as: UInt8.self))
+                let lap = l + r + u + d - 4 * c
+                sum += lap
+                sumSq += lap * lap
+                n += 1
+            }
+        }
+        guard n > 0 else { return 0 }
+        let mean = sum / n
+        return sumSq / n - mean * mean
+    }
+
+    private static func writeJPEG(_ buffer: CVPixelBuffer, location: CLLocation?, focal35mm: Double,
+                                  to url: URL) -> Bool {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
         let image = CIImage(cvPixelBuffer: buffer)
@@ -186,7 +353,21 @@ final class PointCloudCollector: NSObject, ARSessionDelegate {
               let dest = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil)
         else { return false }
 
-        var props: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.9]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        var props: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.92,
+            kCGImagePropertyTIFFDictionary: [
+                kCGImagePropertyTIFFMake: "Apple",
+                kCGImagePropertyTIFFModel: "iPhone (LiDAR Skaner)"
+            ] as [CFString: Any],
+            kCGImagePropertyExifDictionary: [
+                kCGImagePropertyExifFocalLenIn35mmFilm: Int(focal35mm.rounded()),
+                kCGImagePropertyExifPixelXDimension: CVPixelBufferGetWidth(buffer),
+                kCGImagePropertyExifPixelYDimension: CVPixelBufferGetHeight(buffer),
+                kCGImagePropertyExifDateTimeOriginal: formatter.string(from: Date())
+            ] as [CFString: Any]
+        ]
         if let location {
             let lat = location.coordinate.latitude
             let lon = location.coordinate.longitude

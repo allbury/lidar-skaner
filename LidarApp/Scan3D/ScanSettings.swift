@@ -20,11 +20,14 @@ struct ScanSettings: Equatable {
     var allowMediumConfidence = false
     var georeference = false
     var capturePhotos = false
+    var highResPhotos = true
+    var targetOverlap: Double = 0.75
 
     static let interior = ScanSettings(preset: .interior, maxDepth: 5, voxelCentimeters: 1,
                                        allowMediumConfidence: false, georeference: false, capturePhotos: false)
     static let exterior = ScanSettings(preset: .exterior, maxDepth: 8, voxelCentimeters: 2,
-                                       allowMediumConfidence: true, georeference: true, capturePhotos: true)
+                                       allowMediumConfidence: true, georeference: true, capturePhotos: true,
+                                       highResPhotos: true, targetOverlap: 0.75)
 
     var collector: CollectorSettings {
         var c = CollectorSettings()
@@ -34,6 +37,8 @@ struct ScanSettings: Equatable {
         // Większe woksele = mniej punktów na m², więc można objąć większy obiekt.
         c.maxPoints = voxelCentimeters >= 2 ? 4_000_000 : 3_000_000
         c.capturePhotos = capturePhotos
+        c.highResPhotos = highResPhotos
+        c.targetOverlap = Float(targetOverlap)
         return c
     }
 }
@@ -85,10 +90,20 @@ struct ScanSettingsView: View {
                 Section {
                     Toggle("Georeferencja PL-2000 (GPS + kompas)", isOn: custom(\.georeference))
                     Toggle("Zdjęcia do fotogrametrii", isOn: custom(\.capturePhotos))
+                    if settings.capturePhotos {
+                        Toggle("Pełna rozdzielczość aparatu", isOn: custom(\.highResPhotos))
+                        Picker("Nakładanie zdjęć", selection: custom(\.targetOverlap)) {
+                            Text("60%").tag(0.6)
+                            Text("70%").tag(0.7)
+                            Text("75%").tag(0.75)
+                            Text("80%").tag(0.8)
+                            Text("85%").tag(0.85)
+                        }
+                    }
                 } header: {
                     Text("Obiekty zewnętrzne")
                 } footer: {
-                    Text("Georeferencja: chmura i siatka w PL-2000 (dokładność GPS ~1–3 m, obrót wg kompasu). Zdjęcia: automatycznie co 0,5 m lub 15°, z pozycją GPS w EXIF – do Agisoft Metashape, RealityCapture lub Meshroom.")
+                    Text("Georeferencja: chmura w PL-2000 – z GPS i kompasu (~1–3 m) albo z fotopunktów RTK (cm). Zdjęcia robią się same, gdy nakładanie z poprzednim spadnie do zadanej wartości (liczone z odległości do obiektu); poruszone klatki są odrzucane. Pełna rozdzielczość = zdjęcia ~12 Mpx zamiast klatek wideo 2 Mpx.")
                 }
 
                 Section {
