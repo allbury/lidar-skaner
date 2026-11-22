@@ -2,13 +2,21 @@
 
 Aplikacja na iPhone'a lub iPada z LiDAR-em, pisana bez Maca. Kod Swift leży tutaj, kompilacja odbywa się w chmurze (GitHub Actions, macOS), a instalacja z Windowsa przez **Sideloadly** z darmowym Apple ID.
 
-## Funkcje – etap 1
+## Funkcje
 
 | Moduł | Co robi | Wynik |
 |---|---|---|
 | Skan pomieszczenia | Apple RoomPlan: ściany, drzwi, okna, otwory, meble | `model.usdz`, `rzut.dxf`, `pomieszczenie.json` |
 | Pomiar odległości | Krzyżyk na środku ekranu, punkt → punkt | lista pomiarów w cm |
 | Skan 3D (etap 2) | Kolorowa chmura punktów z mapy głębi LiDAR (odszumianie wokselami 1 cm, tylko punkty o wysokiej pewności, 0,2–5 m) + siatka ARKit | `chmura.ply`, `siatka.obj` |
+| Inwentaryzacja sieci (etap 3) | Punkty (studnie, wpusty, zasuwy, hydranty…) z GPS uśrednianym 10 s → PL-2000 (strefy 5–8), głębokość mierzona LiDAR-em, zdjęcia, odcinki sieci (KS, KD, W, G…) | `punkty.csv`, `rury.csv`, `inwentaryzacja.dxf`, `inwentaryzacja.json`, zdjęcia |
+
+**Inwentaryzacja – ważne:**
+- GPS telefonu ma dokładność zwykle 2–5 m. Do map do celów projektowych trzeba wpisać współrzędne z odbiornika GNSS RTK (pola X/Y/H są edytowalne).
+- Wysokość H z telefonu jest orientacyjna (±10 m).
+- PL-2000: X = północ, Y = wschód (np. 7 500 000). W DXF: X rysunku = Y(2000), Y rysunku = X(2000), Z = H; jednostki: metry. Przeliczenie (szereg Krügera, GRS80, m0 = 0,999923) zweryfikowane z niezależnym wzorem – różnice < 0,1 mm.
+- CSV: średnik i przecinek dziesiętny (Excel PL).
+- Głębokość: punkt 1 na krawędzi włazu, punkt 2 na dnie; wynik to różnica wysokości. LiDAR mierzy do ok. 5 m, a woda na dnie może przekłamać pomiar.
 
 **PLY/OBJ:** metry, oś Z w górę (zgodnie z rzutem DXF). Otwierają się w CloudCompare, MeshLab, Blenderze, a po konwersji (np. CloudCompare → LAS/E57) w Civil 3D/Recap.
 
@@ -53,4 +61,4 @@ LidarApp/
 ## Plan dalszych etapów
 
 - ~~Etap 2: chmura punktów i siatka 3D~~ – zrobione (PLY/OBJ).
-- **Etap 3:** inwentaryzacja terenu i instalacji: znaczniki (studnia, rura, zasuwa), GPS / układ PL-2000, eksport do DXF/CSV.
+- ~~Etap 3: inwentaryzacja sieci z GPS / PL-2000~~ – zrobione (CSV/DXF).

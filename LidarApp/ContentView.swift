@@ -65,6 +65,22 @@ struct ContentView: View {
                     .disabled(!hasLidar)
                 }
 
+                Section("Etap 3") {
+                    NavigationLink {
+                        InventoryListView()
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading) {
+                                Text("Inwentaryzacja sieci")
+                                Text("Studnie, rury, GPS → PL-2000, CSV + DXF")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "mappin.and.ellipse")
+                        }
+                    }
+                }
+
                 Section("Pliki") {
                     Text("Zapisane skany znajdziesz w aplikacji Pliki → Na moim iPhonie → LiDAR Skaner.")
                         .font(.footnote)

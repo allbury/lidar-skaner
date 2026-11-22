@@ -20,7 +20,8 @@ targets:
         CFBundleDisplayName: LiDAR Skaner
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
-        NSCameraUsageDescription: Aparat i skaner LiDAR są potrzebne do skanowania pomieszczeń i pomiarów.
+        NSCameraUsageDescription: Aparat i skaner LiDAR są potrzebne do skanowania, pomiarów i zdjęć punktów.
+        NSLocationWhenInUseUsageDescription: Lokalizacja GPS jest potrzebna do nadania współrzędnych PL-2000 punktom inwentaryzacji.
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
