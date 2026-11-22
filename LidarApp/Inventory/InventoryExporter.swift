@@ -66,7 +66,8 @@ enum InventoryExporter {
         var rows: [String] = [row([
             "Nr", "Rodzaj", "X [PL-2000]", "Y [PL-2000]", "Strefa", "H [m]",
             "Szer. geogr.", "Dł. geogr.", "Dokładność GPS [m]", "Próbki GPS",
-            "Głębokość [m]", "Wymiar / DN", "Materiał", "Opis", "Zdjęcia", "Data"
+            "Głębokość [m]", "Wymiar / DN", "Materiał", "Opis", "Zdjęcia", "Data",
+            "Status", "Źródło położenia", "Opis z mapy"
         ])]
         for p in survey.points {
             let zone = p.zone2000.map(String.init) ?? ""
@@ -76,7 +77,10 @@ enum InventoryExporter {
                 dec(p.x2000, 3), dec(p.y2000, 3), zone, dec(p.height, 2),
                 dec(p.latitude, 8), dec(p.longitude, 8), dec(p.horizontalAccuracy, 1), samples,
                 dec(p.depth, 2), p.dimension, p.material, p.note,
-                p.photos.joined(separator: ", "), dateFormatter.string(from: p.createdAt)
+                p.photos.joined(separator: ", "), dateFormatter.string(from: p.createdAt),
+                p.isPlanned ? "do inwentaryzacji" : "zinwentaryzowany",
+                p.source?.name ?? "",
+                (p.mapInfo ?? "").replacingOccurrences(of: "\n", with: " | ")
             ]
             rows.append(row(values))
         }
@@ -109,9 +113,11 @@ enum InventoryExporter {
             let cx = y2000
             let cy = x2000
             let cz = p.height ?? 0
-            let layer = p.kind.dxfLayer
-            doc.point(x: cx, y: cy, z: cz, layer: layer, color: 7)
-            doc.circle(x: cx, y: cy, z: cz, radius: p.kind.dxfRadius, layer: layer, color: 7)
+            // Punkty jeszcze niezinwentaryzowane – osobna warstwa, kolor pomarańczowy.
+            let layer = p.isPlanned ? p.kind.dxfLayer + "_DO_INWENT" : p.kind.dxfLayer
+            let color = p.isPlanned ? 30 : 7
+            doc.point(x: cx, y: cy, z: cz, layer: layer, color: color)
+            doc.circle(x: cx, y: cy, z: cz, radius: p.kind.dxfRadius, layer: layer, color: color)
             doc.text(p.number, x: cx + p.kind.dxfRadius + 0.2, y: cy + 0.1, z: cz,
                      height: textHeight, layer: "OPISY_NUMERY", color: 7)
             var details: [String] = []

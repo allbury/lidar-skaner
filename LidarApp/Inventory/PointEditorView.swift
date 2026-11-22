@@ -20,6 +20,9 @@ struct PointDraft {
     var note = ""
     var photos: [String] = []
     var createdAt = Date()
+    var isDone = true
+    var source: CoordinateSource?
+    var mapInfo: String?
 
     init(point: SurveyPoint) {
         id = point.id
@@ -39,6 +42,9 @@ struct PointDraft {
         note = point.note
         photos = point.photos
         createdAt = point.createdAt
+        isDone = !point.isPlanned
+        source = point.source
+        mapInfo = point.mapInfo
     }
 
     init(kind: PointKind, number: String) {
@@ -66,6 +72,7 @@ struct PointDraft {
         gpsSamples = fix.samples
         let c = PL2000.convert(latitude: fix.latitude, longitude: fix.longitude)
         zone = c.zone
+        source = .gps
         xText = Self.text(c.x, 3)
         yText = Self.text(c.y, 3)
         if let alt = fix.altitude { hText = Self.text(alt, 2) }
@@ -90,6 +97,9 @@ struct PointDraft {
         p.note = note
         p.photos = photos
         p.createdAt = createdAt
+        p.status = isDone ? .done : .planned
+        p.source = source
+        p.mapInfo = mapInfo
         return p
     }
 }
@@ -139,6 +149,11 @@ struct PointEditorView: View {
                         TextField("np. S1", text: $draft.number)
                             .multilineTextAlignment(.trailing)
                     }
+                    Toggle("Zinwentaryzowany", isOn: $draft.isDone)
+                }
+
+                if !draft.isDone || draft.mapInfo != nil {
+                    targetSection
                 }
 
                 gpsSection
@@ -217,6 +232,34 @@ struct PointEditorView: View {
                 }
                 .ignoresSafeArea()
             }
+        }
+    }
+
+    /// Punkt wskazany na mapie: skąd pochodzi i jak do niego dojść.
+    private var targetSection: some View {
+        Section {
+            if let source = draft.source {
+                LabeledContent("Źródło położenia", value: source.name)
+            }
+            if let info = draft.mapInfo {
+                Text(info)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if let here = location.current,
+               let nav = TargetNavigation.describe(from: here, to: draft.makePoint()) {
+                Label("Do punktu: \(nav.long)", systemImage: "location.north.line.fill")
+                    .foregroundStyle(nav.distance <= max(here.horizontalAccuracy, 3) ? Color.green : Color.orange)
+                if nav.distance <= max(here.horizontalAccuracy, 3) {
+                    Text("Jesteś przy punkcie (w granicach dokładności GPS).")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            }
+        } header: {
+            Text("Cel z mapy")
+        } footer: {
+            Text("Współrzędne z podkładu DXF są zwykle dokładniejsze niż GPS telefonu – nie nadpisuj ich pozycją GPS, jeśli studnia zgadza się z mapą. Po pomiarze głębokości i zdjęciach zaznacz „Zinwentaryzowany”.")
         }
     }
 

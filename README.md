@@ -11,6 +11,12 @@ Aplikacja na iPhone'a lub iPada z LiDAR-em, pisana bez Maca. Kod Swift leży tut
 | Skan 3D (etap 2) | Kolorowa chmura punktów z mapy głębi LiDAR (odszumianie wokselami 1 cm, tylko punkty o wysokiej pewności, 0,2–5 m) + siatka ARKit | `chmura.ply`, `siatka.obj` |
 | Inwentaryzacja sieci (etap 3) | Punkty (studnie, wpusty, zasuwy, hydranty…) z GPS uśrednianym 10 s → PL-2000 (strefy 5–8), głębokość mierzona LiDAR-em, zdjęcia, odcinki sieci (KS, KD, W, G…) | `punkty.csv`, `rury.csv`, `inwentaryzacja.dxf`, `inwentaryzacja.json`, zdjęcia |
 
+**Mapa w inwentaryzacji (wybór studni do zinwentaryzowania):**
+- Geoportal (GUGiK, WMS EPSG:3857, na żywo): ortofotomapa, działki i budynki (KIEG), uzbrojenie terenu (KIUT/GESUT). Przytrzymanie palca przy włączonym uzbrojeniu pobiera opis obiektu z GESUT (GetFeatureInfo), np. „zasuwa lub zawór (w)”.
+- Podkład DXF w PL-2000 (tekstowy DXF, dowolna wersja): linie, polilinie, okręgi, łuki, bloki, punkty i teksty. Okrąg, blok lub punkt można wskazać jako studnię, a numer jest brany z najbliższego tekstu (do 3 m). Strefę i układ osi aplikacja wykrywa sama, a w razie potrzeby można je zmienić ręcznie.
+- Wskazane elementy trafiają do listy „Do inwentaryzacji” (pomarańczowe na mapie). W terenie aplikacja pokazuje odległość i kierunek do punktu; po pomiarze zaznacz „Zinwentaryzowany”.
+- Odwrotne przeliczenie PL-2000 → WGS84 zweryfikowane: po przeliczeniu tam i z powrotem błąd jest poniżej 1 mm.
+
 **Skan 3D z zewnątrz (budynki, mosty)** – ⚙︎ w Skanie 3D → tryb „Budynek / most”:
 - zasięg LiDAR do 8 m (powyżej ~5 m szum rośnie), siatka 2 cm, punkty średniej pewności, do 4 mln punktów;
 - **georeferencja PL-2000**: ARKit w orientacji wg kompasu + przesunięcie z GPS uśrednione z całego obchodu (próbki ≤ 15 m), z uwzględnieniem zbieżności południków (zweryfikowane z odwzorowaniem) → `chmura_PL2000.ply` (double), `siatka_PL2000.obj`, `georeferencja.txt`. Dokładność to ok. 1–3 m dla położenia i kilka stopni dla obrotu. Do celów geodezyjnych dopasuj chmurę do punktów RTK, np. w CloudCompare;

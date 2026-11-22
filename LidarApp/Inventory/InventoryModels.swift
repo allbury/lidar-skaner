@@ -120,6 +120,27 @@ enum NetworkKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum PointStatus: String, Codable {
+    /// Wskazany na mapie – do zinwentaryzowania w terenie.
+    case planned
+    /// Zinwentaryzowany.
+    case done
+}
+
+enum CoordinateSource: String, Codable {
+    case gps, dxf, geoportal, map, manual
+
+    var name: String {
+        switch self {
+        case .gps: return "GPS"
+        case .dxf: return "podkład DXF"
+        case .geoportal: return "Geoportal (GESUT)"
+        case .map: return "wskazanie na mapie"
+        case .manual: return "wpisane ręcznie"
+        }
+    }
+}
+
 struct SurveyPoint: Codable, Identifiable, Hashable {
     var id = UUID()
     var number: String
@@ -140,8 +161,22 @@ struct SurveyPoint: Codable, Identifiable, Hashable {
     var note: String = ""
     var photos: [String] = []
     var createdAt = Date()
+    // Pola dodane później – opcjonalne, żeby starsze pliki JSON nadal się wczytywały.
+    var status: PointStatus?
+    var source: CoordinateSource?
+    /// Opis z mapy (np. informacja z GESUT, warstwa/blok z DXF).
+    var mapInfo: String?
 
     var hasCoordinates: Bool { x2000 != nil && y2000 != nil }
+    var isPlanned: Bool { status == .planned }
+
+    /// Pozycja geograficzna: z GPS, a gdy jej brak – przeliczona z PL-2000.
+    var coordinate: (latitude: Double, longitude: Double)? {
+        if let latitude, let longitude { return (latitude, longitude) }
+        guard let x = x2000, let y = y2000,
+              let zone = zone2000 ?? PL2000.zone(forEasting: y) else { return nil }
+        return PL2000.toGeographic(x: x, y: y, zone: zone)
+    }
 }
 
 struct PipeSegment: Codable, Identifiable, Hashable {
@@ -160,6 +195,10 @@ struct Survey: Codable, Identifiable, Hashable {
     var createdAt = Date()
     var points: [SurveyPoint] = []
     var pipes: [PipeSegment] = []
+    /// Podkład DXF (nazwa pliku w folderze inwentaryzacji) i sposób odczytu współrzędnych.
+    var backgroundFile: String?
+    var backgroundSwapAxes: Bool?
+    var backgroundZone: Int?
 
     func point(_ id: UUID) -> SurveyPoint? {
         points.first { $0.id == id }
@@ -235,6 +274,23 @@ final class SurveyStore: ObservableObject {
         return url
     }
 
+    func backgroundURL(for survey: Survey) -> URL? {
+        survey.backgroundFile.map { folder.appendingPathComponent($0) }
+    }
+
+    /// Kopiuje wybrany plik DXF do folderu inwentaryzacji i zwraca jego nazwę.
+    func importBackground(from source: URL, for surveyID: UUID) throws -> String {
+        let name = "\(surveyID.uuidString)_podklad.dxf"
+        let target = folder.appendingPathComponent(name)
+        let access = source.startAccessingSecurityScopedResource()
+        defer { if access { source.stopAccessingSecurityScopedResource() } }
+        if FileManager.default.fileExists(atPath: target.path) {
+            try FileManager.default.removeItem(at: target)
+        }
+        try FileManager.default.copyItem(at: source, to: target)
+        return name
+    }
+
     @discardableResult
     func create(name: String) -> Survey {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -258,6 +314,9 @@ final class SurveyStore: ObservableObject {
         try? FileManager.default.removeItem(at: fileURL(for: survey.id))
         let photos = folder.appendingPathComponent("\(survey.id.uuidString)_zdjecia", isDirectory: true)
         try? FileManager.default.removeItem(at: photos)
+        if let background = backgroundURL(for: survey) {
+            try? FileManager.default.removeItem(at: background)
+        }
         surveys.removeAll { $0.id == survey.id }
     }
 }

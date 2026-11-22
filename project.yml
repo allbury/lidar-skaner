@@ -24,6 +24,12 @@ targets:
         NSLocationWhenInUseUsageDescription: Lokalizacja GPS jest potrzebna do nadania współrzędnych PL-2000 punktom inwentaryzacji.
         UILaunchScreen: {}
         UIFileSharingEnabled: true
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.autodesk.dxf
+            UTTypeDescription: Rysunek DXF
+            UTTypeConformsTo: [public.data, public.text]
+            UTTypeTagSpecification:
+              public.filename-extension: [dxf, DXF]
         LSSupportsOpeningDocumentsInPlace: true
         UIRequiredDeviceCapabilities: [arkit]
         UISupportedInterfaceOrientations:

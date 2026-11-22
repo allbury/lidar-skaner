@@ -39,18 +39,54 @@ struct SurveyView: View {
         store.save(s)
     }
 
+    private func deletePoints(_ ids: [UUID]) {
+        update { s in
+            s.points.removeAll { ids.contains($0.id) }
+            s.pipes.removeAll { ids.contains($0.fromID) || ids.contains($0.toID) }
+        }
+    }
+
     var body: some View {
         List {
             Section {
                 gpsStatus
             }
 
-            Section("Punkty (\(survey.points.count))") {
+            Section {
+                NavigationLink {
+                    SurveyMapScreen(store: store, surveyID: surveyID, location: location)
+                } label: {
+                    Label("Mapa – wybierz studnie do inwentaryzacji", systemImage: "map")
+                }
+            } footer: {
+                Text("Geoportal (ortofotomapa, działki, uzbrojenie GESUT) lub własny podkład DXF.")
+            }
+
+            let planned = survey.points.filter { $0.isPlanned }
+            let done = survey.points.filter { !$0.isPlanned }
+
+            if !planned.isEmpty {
+                Section("Do inwentaryzacji (\(planned.count))") {
+                    ForEach(planned) { point in
+                        Button {
+                            sheet = .editPoint(point.id)
+                        } label: {
+                            pointRow(point)
+                        }
+                        .foregroundStyle(.primary)
+                    }
+                    .onDelete { offsets in
+                        deletePoints(offsets.map { planned[$0].id })
+                    }
+                }
+            }
+
+            Section("Zinwentaryzowane (\(done.count))") {
                 if survey.points.isEmpty {
-                    Text("Dodaj pierwszy punkt przyciskiem +.")
+                    Text("Dodaj punkt przyciskiem + albo wskaż studnie na mapie.")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(survey.points) { point in
+                ForEach(done) { point in
                     Button {
                         sheet = .editPoint(point.id)
                     } label: {
@@ -59,11 +95,7 @@ struct SurveyView: View {
                     .foregroundStyle(.primary)
                 }
                 .onDelete { offsets in
-                    update { s in
-                        let ids = offsets.map { s.points[$0].id }
-                        s.points.remove(atOffsets: offsets)
-                        s.pipes.removeAll { ids.contains($0.fromID) || ids.contains($0.toID) }
-                    }
+                    deletePoints(offsets.map { done[$0].id })
                 }
             }
 
@@ -112,8 +144,9 @@ struct SurveyView: View {
                 }
             }
         }
+        // GPS działa, dopóki inwentaryzacja jest otwarta (także na ekranie mapy);
+        // zatrzymuje się po zamknięciu widoku (zwolnienie LocationManager).
         .onAppear { location.start() }
-        .onDisappear { location.stop() }
         .sheet(item: $sheet) { kind in
             sheetContent(kind)
         }
@@ -203,6 +236,12 @@ struct SurveyView: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
+                if p.isPlanned, let here = location.current,
+                   let nav = TargetNavigation.describe(from: here, to: p) {
+                    Label(nav.short, systemImage: "location.north.line")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.orange)
+                }
                 if let depth = p.depth {
                     Text(String(format: "h %.2f m", depth)).font(.caption.monospacedDigit())
                 }
