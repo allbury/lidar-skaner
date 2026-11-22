@@ -55,7 +55,7 @@ struct ContentView: View {
                         Label {
                             VStack(alignment: .leading) {
                                 Text("Skan 3D")
-                                Text("Chmura punktów (PLY, kolor) + siatka (OBJ)")
+                                Text("Wnętrza i obiekty z zewnątrz: chmura PLY, siatka OBJ, PL-2000, zdjęcia")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         } icon: {

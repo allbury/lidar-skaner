@@ -11,6 +11,12 @@ Aplikacja na iPhone'a lub iPada z LiDAR-em, pisana bez Maca. Kod Swift leży tut
 | Skan 3D (etap 2) | Kolorowa chmura punktów z mapy głębi LiDAR (odszumianie wokselami 1 cm, tylko punkty o wysokiej pewności, 0,2–5 m) + siatka ARKit | `chmura.ply`, `siatka.obj` |
 | Inwentaryzacja sieci (etap 3) | Punkty (studnie, wpusty, zasuwy, hydranty…) z GPS uśrednianym 10 s → PL-2000 (strefy 5–8), głębokość mierzona LiDAR-em, zdjęcia, odcinki sieci (KS, KD, W, G…) | `punkty.csv`, `rury.csv`, `inwentaryzacja.dxf`, `inwentaryzacja.json`, zdjęcia |
 
+**Skan 3D z zewnątrz (budynki, mosty)** – ⚙︎ w Skanie 3D → tryb „Budynek / most”:
+- zasięg LiDAR do 8 m (powyżej ~5 m szum rośnie), siatka 2 cm, punkty średniej pewności, do 4 mln punktów;
+- **georeferencja PL-2000**: ARKit w orientacji wg kompasu + przesunięcie z GPS uśrednione z całego obchodu (próbki ≤ 15 m), z uwzględnieniem zbieżności południków (zweryfikowane z odwzorowaniem) → `chmura_PL2000.ply` (double), `siatka_PL2000.obj`, `georeferencja.txt`. Dokładność to ok. 1–3 m dla położenia i kilka stopni dla obrotu. Do celów geodezyjnych dopasuj chmurę do punktów RTK, np. w CloudCompare;
+- **zdjęcia do fotogrametrii**: automatycznie co 0,5 m lub 15°, z GPS w EXIF, oraz `zdjecia_pozycje.csv` (pozycje kamer i kalibracja). Służą do partii poza zasięgiem LiDAR-u (wysokie elewacje, spód i ustroje mostów), do obróbki w Agisoft Metashape, RealityCapture lub Meshroom;
+- długie obiekty skanuj odcinkami (eksport → kosz → kolejny odcinek), bo śledzenie ARKit dryfuje na dużych odległościach.
+
 **Inwentaryzacja – ważne:**
 - GPS telefonu ma dokładność zwykle 2–5 m. Do map do celów projektowych trzeba wpisać współrzędne z odbiornika GNSS RTK (pola X/Y/H są edytowalne).
 - Wysokość H z telefonu jest orientacyjna (±10 m).
